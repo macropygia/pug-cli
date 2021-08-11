@@ -2,6 +2,30 @@
 As with most npm modules, this project adheres to
 [Semantic Versioning](http://semver.org/).
 
+## 2021-08-11
+
+### Changed
+- Upgrade commander.js 6 to 8.
+- Upgrade all dependencies.
+
+## 2020
+
+### Changed
+- Upgrade to Pug3.
+- Upgrade all dependencies.
+- Rename `--name` option to `--template-name`. (due to commander.js)
+
+## 2019-09-16
+
+### Added
+- `--soft-start` option for does not execute render when starting `watch` mode.
+- `--lf` `--crlf` `--cr` option for convert EOL charactor to LF/CRLF/CR.
+- `--ignore-only-files` option for does not ignore directories start with an underscore.
+
+### Changed
+- `watch` uses `chokidar` instead of `fs.watchFile` to detect file changes and additions.
+- `watch` detects and processes the added files.
+
 ## [1.0.0-alpha6] - 2016-06-01
 
 ### Added

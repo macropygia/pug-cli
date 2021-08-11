@@ -2,23 +2,27 @@
 
 'use strict';
 
-var fs = require('fs');
-var path = require('path');
-var program = require('commander');
-var mkdirp = require('mkdirp');
-var chalk = require('chalk');
-var pug = require('pug');
+const fs = require('fs');
+const path = require('path');
+const { program } = require('commander');
+const mkdirp = require('mkdirp');
+const chalk = require('chalk');
+const pug = require('pug');
+const chokidar = require('chokidar');
+const eol = require('eol');
 
-var basename = path.basename;
-var dirname = path.dirname;
-var resolve = path.resolve;
-var normalize = path.normalize;
-var join = path.join;
-var relative = path.relative;
+const basename = path.basename;
+const dirname = path.dirname;
+const resolve = path.resolve;
+const normalize = path.normalize;
+const join = path.join;
+const relative = path.relative;
 
-// Pug options
 
-var options = {};
+// chokidar
+
+let changeWatcher = false;
+let addWatcher = false;
 
 // options
 
@@ -34,11 +38,16 @@ program
   .option('-b, --basedir <path>', 'path used as root directory to resolve absolute includes')
   .option('-P, --pretty', 'compile pretty HTML output')
   .option('-c, --client', 'compile function for client-side')
-  .option('-n, --name <str>', 'the name of the compiled template (requires --client)')
+  .option('-n, --template-name <str>', 'the name of the compiled template (requires --client)')
   .option('-D, --no-debug', 'compile without debugging (smaller functions)')
   .option('-w, --watch', 'watch files for changes and automatically re-render')
   .option('-E, --extension <ext>', 'specify the output file extension')
   .option('-s, --silent', 'do not output logs')
+  .option('--lf', 'line ending character convert to cr')
+  .option('--crlf', 'line ending character convert to crlf')
+  .option('--cr', 'line ending character convert to lf')
+  .option('--soft-start', 'do not execute render on startup')
+  .option('--ignore-only-files', 'render does not ignore directories start with underscore')
   .option('--name-after-file', 'name the template after the last section of the file path (requires --client and overriden by --name)')
   .option('--doctype <str>', 'specify the doctype on the command line (useful if it is not specified by the template)')
 
@@ -77,9 +86,8 @@ program.parse(process.argv);
 
 // options given, parse them
 
-if (program.obj) {
-  options = parseObj(program.obj);
-}
+const args = program.opts();
+const options = (args.obj) ? parseObj(args.obj) : {};
 
 /**
  * Parse object either in `input` or in the file called `input`. The latter is
@@ -89,11 +97,11 @@ function parseObj (input) {
   try {
     return require(path.resolve(input));
   } catch (e) {
-    var str;
+    let str;
     try {
-      str = fs.readFileSync(program.obj, 'utf8');
+      str = fs.readFileSync(args.obj, 'utf8');
     } catch (e) {
-      str = program.obj;
+      str = args.obj;
     }
     try {
       return JSON.parse(str);
@@ -111,43 +119,68 @@ function parseObj (input) {
   ['basedir', 'basedir'],    // --basedir
   ['doctype', 'doctype'],    // --doctype
 ].forEach(function (o) {
-  options[o[1]] = program[o[0]] !== undefined ? program[o[0]] : options[o[1]];
+  options[o[1]] = args[o[0]] !== undefined ? args[o[0]] : options[o[1]];
 });
 
 // --name
 
-if (typeof program.name === 'string') {
-  options.name = program.name;
+if (typeof args.templateName === 'string') {
+  options.templateName = args.templateName;
 }
 
 // --silent
 
-var consoleLog = program.silent ? function() {} : console.log;
+const consoleLog = args.silent ? function() {} : console.log;
 
 // left-over args are file paths
 
-var files = program.args;
+const files = program.args;
 
 // object of reverse dependencies of a watched file, including itself if
 // applicable
 
-var watchList = {};
+const watchList = {};
 
 // function for rendering
-var render = program.watch ? tryRender : renderFile;
+const render = args.watch ? tryRender : renderFile;
+
+// soft-start flag
+let softStart = false;
+if (args.watch && args.softStart) {
+  softStart = true;
+}
 
 // compile files
 
 if (files.length) {
   consoleLog();
-  if (program.watch) {
+  if (args.watch) {
     process.on('SIGINT', function() {
       process.exit(1);
     });
   }
   files.forEach(function (file) {
     render(file);
+    // watch additions
+    if (args.watch) {
+      if (!addWatcher) {
+        chokidar
+          .watch(file, {
+            persistent: true,
+            interval: 1000,
+            awaitWriteFinish: true
+          })
+          .on('add', function(path) {
+            if(!watchList[path]) {
+              tryRender(path, file);
+            }
+          });
+      } else {
+        addWatcher.add(file);
+      }
+    }
   });
+  softStart = false;
 // stdio
 } else {
   stdin();
@@ -161,7 +194,7 @@ if (files.length) {
 function watchFile(path, base, rootPath) {
   path = normalize(path);
 
-  var log = '  ' + chalk.gray('watching') + ' ' + chalk.cyan(path);
+  let log = '  ' + chalk.gray('watching') + ' ' + chalk.cyan(path);
   if (!base) {
     base = path;
   } else {
@@ -179,16 +212,23 @@ function watchFile(path, base, rootPath) {
 
   consoleLog(log);
   watchList[path] = [base];
-  fs.watchFile(path, {persistent: true, interval: 200},
-               function (curr, prev) {
-    // File doesn't exist anymore. Keep watching.
-    if (curr.mtime.getTime() === 0) return;
-    // istanbul ignore if
-    if (curr.mtime.getTime() === prev.mtime.getTime()) return;
-    watchList[path].forEach(function(file) {
-      tryRender(file, rootPath);
-    });
-  });
+  if (!changeWatcher) {
+    changeWatcher = chokidar
+      .watch(path, {
+        persistent: true,
+        interval: 200,
+        awaitWriteFinish: {
+          stabilityThreshold: 300
+        }
+      })
+      .on('change', function(path) {
+        watchList[path].forEach(function(file) {
+          tryRender(file, rootPath);
+        });
+      });
+  } else {
+    changeWatcher.add(path);
+  }
 }
 
 /**
@@ -218,16 +258,16 @@ function tryRender(path, rootPath) {
  */
 
 function stdin() {
-  var buf = '';
+  let buf = '';
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', function(chunk){ buf += chunk; });
   process.stdin.on('end', function(){
-    var output;
+    let output;
     if (options.client) {
       output = pug.compileClient(buf, options);
     } else {
-      var fn = pug.compile(buf, options);
-      var output = fn(options);
+      const fn = pug.compile(buf, options);
+      const output = fn(options);
     }
     process.stdout.write(output);
   }).resume();
@@ -242,37 +282,44 @@ function stdin() {
  */
 
 function renderFile(path, rootPath) {
-  var isPug = /\.(?:pug|jade)$/;
-  var isIgnored = /([\/\\]_)|(^_)/;
-
-  var stat = fs.lstatSync(path);
+  const isPug = /\.(?:pug|jade)$/;
+  const isIgnored = /([\/\\]_)|(^_)/;
+  const stat = fs.lstatSync(path);
+  let ignoreTarget = path;
+  if (args.ignoreOnlyFiles) {
+    ignoreTarget = basename(path);
+  }
   // Found pug file
-  if (stat.isFile() && isPug.test(path) && !isIgnored.test(path)) {
+  if (stat.isFile() && isPug.test(path) && !isIgnored.test(ignoreTarget)) {
     // Try to watch the file if needed. watchFile takes care of duplicates.
-    if (program.watch) watchFile(path, null, rootPath);
-    if (program.nameAfterFile) {
-      options.name = getNameFromFileName(path);
+    if (args.watch) watchFile(path, null, rootPath);
+    if (args.nameAfterFile) {
+      options.templateName = getNameFromFileName(path);
     }
-    var fn = options.client
+    const fn = options.client
            ? pug.compileFileClient(path, options)
            : pug.compileFile(path, options);
-    if (program.watch && fn.dependencies) {
+    if (args.watch && fn.dependencies) {
       // watch dependencies, and recompile the base
       fn.dependencies.forEach(function (dep) {
         watchFile(dep, path, rootPath);
       });
     }
 
+    if (softStart) {
+      return;
+    }
+
     // --extension
-    var extname;
-    if (program.extension)   extname = '.' + program.extension;
+    let extname;
+    if (args.extension)   extname = '.' + args.extension;
     else if (options.client) extname = '.js';
-    else if (program.extension === '') extname = '';
+    else if (args.extension === '') extname = '';
     else                     extname = '.html';
 
     // path: foo.pug -> foo.<ext>
     path = path.replace(isPug, extname);
-    if (program.out) {
+    if (args.out) {
       // prepend output directory
       if (rootPath) {
         // replace the rootPath of the resolved path with output directory
@@ -281,16 +328,25 @@ function renderFile(path, rootPath) {
         // if no rootPath handling is needed
         path = basename(path);
       }
-      path = resolve(program.out, path);
+      path = resolve(args.out, path);
     }
-    var dir = resolve(dirname(path));
+    const dir = resolve(dirname(path));
     mkdirp.sync(dir);
-    var output = options.client ? fn : fn(options);
+    const output = options.client ? fn : fn(options);
+
+    if(args.lf) {
+      output = eol.lf(output);
+    } else if(args.crlf) {
+      output = eol.crlf(output);
+    } else if(args.cr) {
+      output = eol.cr(output);
+    }
     fs.writeFileSync(path, output);
+
     consoleLog('  ' + chalk.gray('rendered') + ' ' + chalk.cyan('%s'), normalize(path));
   // Found directory
   } else if (stat.isDirectory()) {
-    var files = fs.readdirSync(path);
+    const files = fs.readdirSync(path);
     files.map(function(filename) {
       return path + '/' + filename;
     }).forEach(function (file) {
@@ -306,7 +362,7 @@ function renderFile(path, rootPath) {
  * @returns {String}
  */
 function getNameFromFileName(filename) {
-  var file = basename(filename).replace(/\.(?:pug|jade)$/, '');
+  const file = basename(filename).replace(/\.(?:pug|jade)$/, '');
   return file.toLowerCase().replace(/[^a-z0-9]+([a-z])/g, function (_, character) {
     return character.toUpperCase();
   }) + 'Template';

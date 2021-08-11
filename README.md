@@ -7,6 +7,28 @@ Pug's CLI interface
 [![NPM version](https://img.shields.io/npm/v/pug-cli.svg)](https://www.npmjs.org/package/pug-cli)
 [![Coverage Status](https://img.shields.io/codecov/c/github/pugjs/pug-cli.svg)](https://codecov.io/gh/pugjs/pug-cli)
 
+## Modded
+
+Optimized for large-scale static website development.
+Refer to HISTORY.md for details.
+
+大規模静的Webサイト開発に対応した調整・機能追加を実施
+
+- `watch` モード開始時にhtmlを出力しない `--soft-start` オプションを追加
+- 改行コードをLF/CRLF/CRに変換する `--lf` `--crlf` `--cr` オプションを追加
+- アンダースコアから始まるディレクトリを処理対象に含める `--ignore-only-files` オプションを追加
+    - 通常はアンダースコアから始まるファイルとディレクトリの両方が処理から除外される
+- `watch` モードの更新監視方法を `fs.watchFile` から `chokidar` に変更
+- `watch` モードがファイルの追加を検出できるように修正
+- 依存パッケージを更新
+    - commander.jsの仕様変更に対応するため `--name` オプションを `--template-name` に変更
+- Pug3に対応
+
+### ToDo
+
+- 対象指定をglobで行えるように
+- chokidarの監視対象設定を初期化処理（includeやextendsを元にした参照先リストの生成）から分離する
+
 ## Usage
 
 ```
@@ -19,24 +41,29 @@ input is taken from standard input and output to standard output.
 ### Options
 
 ```
--h, --help             output usage information
--V, --version          output the version number
--O, --obj <str|path>   JSON/JavaScript options object or file
--o, --out <dir>        output the rendered HTML or compiled JavaScript to
-                       <dir>
--p, --path <path>      filename used to resolve includes
--b, --basedir          path used as root directory to resolve absolute includes
--P, --pretty           compile pretty HTML output
--c, --client           compile function for client-side runtime.js
--n, --name <str>       the name of the compiled template (requires --client)
--D, --no-debug         compile without debugging (smaller functions)
--w, --watch            watch files for changes and automatically re-render
--E, --extension <ext>  specify the output file extension
--s, --silent           do not output logs
---name-after-file      name the template after the last section of the file
-                       path (requires --client and overriden by --name)
---doctype <str>        specify the doctype on the command line (useful if it
-                       is not specified by the template)
+-h, --help                 output usage information
+-V, --version              output the version number
+-O, --obj <str|path>       JSON/JavaScript options object or file
+-o, --out <dir>            output the rendered HTML or compiled JavaScript to
+                           <dir>
+-p, --path <path>          filename used to resolve includes
+-b, --basedir              path used as root directory to resolve absolute includes
+-P, --pretty               compile pretty HTML output
+-c, --client               compile function for client-side runtime.js
+-n, --template-name <str>  the name of the compiled template (requires --client)
+-D, --no-debug             compile without debugging (smaller functions)
+-w, --watch                watch files for changes and automatically re-render
+-E, --extension <ext>      specify the output file extension
+-s, --silent               do not output logs
+--lf                       line ending character force convert to lf
+--crlf                     line ending character force convert to crlf
+--cr                       line ending character force convert to cr
+--soft-start               do not execute render when starting watch mode
+--ignore-only-files        does not ignore directories start with an underscore
+--name-after-file          name the template after the last section of the file
+                           path (requires --client and overriden by --name)
+--doctype <str>            specify the doctype on the command line (useful if it
+                           is not specified by the template)
 ```
 
 ### Examples
